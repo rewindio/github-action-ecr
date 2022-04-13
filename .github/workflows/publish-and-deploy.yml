@@ -1,0 +1,156 @@
+name: Terraform Apply
+
+on:
+  workflow_call:
+    inputs:
+      aws_region:
+        description: "The AWS Region to deploy to"
+        required: true
+        type: string
+      ecs_cluster_name:
+        description: "Name of an existing ECS Cluster"
+        required: true
+        type: string
+      ecs_service_name:
+        description: "Name of an existing ECS Service"
+        required: true
+        type: string
+      ecs_task_definition:
+        description: "Name of an existing ECS Task definition"
+        required: true
+        type: string
+      ecr_repository:
+        description: "Name of an existing ECR repository"
+        required: true
+        type: string
+      ecs_container_definition:
+        description: "Name of an existing container definition within the specified task definition"
+        required: true
+        type: string
+      ecs_deploy:
+        description: "Whether or not to deploy the rendered task definition to ECS."
+        required: true
+        default: false
+        type: boolean
+      ecr_push:
+        description: "Whether or not to push the image to ECR."
+        required: true
+        default: false
+        type: boolean
+      docker_file_path:
+        description: "The path to the Dockerfile"
+        required: false
+        type: string
+        default: ./Dockerfile
+      docker_context_path:
+        description: "The path to the docker context"
+        required: false
+        type: string
+        default: .
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        description: "The AWS Access Key ID used during publish and deploy."
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        description: "The AWS Secret Access Key used during publish and deploy."
+        required: true
+
+jobs:
+
+  build-and-publish:
+    name: 'Build & Publish (${{ inputs.ecs_service_name }})'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "${{ inputs.aws_region }}"
+          mask-aws-account-id: 'no'
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: "${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}"
+          tags: |
+            type=sha,enable=true,priority=100,prefix=sha-,suffix=,format=short
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Cache Docker layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build and push to ECR
+        uses: docker/build-push-action@v2
+        with:
+          # All layers should be cached to optimize for multi-environment deploys
+          # Can't cache locally. Blocked by https://github.com/docker/build-push-action/issues/252
+          #cache-from: type=local,src=/tmp/.buildx-cache
+          #cache-to: type=local,dest=/tmp/.buildx-cache
+          cache-from: type=gha,src=/tmp/.buildx-cache
+          cache-to: type=gha,dest=/tmp/.buildx-cache-new
+          context: "${{ inputs.docker_context_path }}"
+          file: "${{ inputs.docker_file_path }}"
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64
+          push: ${{ inputs.ecr_push }}
+          tags: ${{ steps.meta.outputs.tags }}
+
+  deploy:
+    name: 'Deploy (${{ inputs.ecs_service_name }})'
+    needs: [build-and-publish]
+    runs-on: ubuntu-latest
+    if: ${{ inputs.ecs_deploy }}
+
+    steps:
+
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "${{ inputs.aws_region }}"
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ inputs.ecs_task_definition }} \
+            --query taskDefinition > task-definition.json
+
+      - name: Render Amazon ECS task definition
+        id: render-web-container
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ inputs.ecs_container_definition }}
+          image: ${{ needs.build-and-publish.outputs.tag }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-web-container.outputs.task-definition }}
+          service: "${{ inputs.ecs_service_name }}"
+          cluster: "${{ inputs.ecs_cluster_name }}"
+          wait-for-service-stability: true
