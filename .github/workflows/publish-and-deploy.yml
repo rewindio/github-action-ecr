@@ -47,6 +47,10 @@ on:
         required: false
         type: string
         default: .
+      docker_target:
+        description: "The target to build"
+        required: false
+        type: string
     secrets:
       AWS_ACCESS_KEY_ID:
         description: "The AWS Access Key ID used during publish and deploy."
@@ -113,6 +117,7 @@ jobs:
           platforms: linux/amd64
           push: ${{ inputs.ecr_push }}
           tags: ${{ steps.meta.outputs.tags }}
+          target: ${{ inputs.docker_target }}
 
   deploy:
     name: 'Deploy (${{ inputs.ecs_service_name }})'
