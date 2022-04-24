@@ -58,6 +58,9 @@ on:
       AWS_SECRET_ACCESS_KEY:
         description: "The AWS Secret Access Key used during publish and deploy."
         required: true
+      BUILD_ARGS:
+        description: "Optional docker build args"
+        required: false
 
 jobs:
 
@@ -109,6 +112,7 @@ jobs:
           # Can't cache locally. Blocked by https://github.com/docker/build-push-action/issues/252
           #cache-from: type=local,src=/tmp/.buildx-cache
           #cache-to: type=local,dest=/tmp/.buildx-cache
+          build-args: ${{ secrets.BUILD_ARGS }}
           cache-from: type=gha,src=/tmp/.buildx-cache
           cache-to: type=gha,dest=/tmp/.buildx-cache-new
           context: "${{ inputs.docker_context_path }}"
