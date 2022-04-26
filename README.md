@@ -18,7 +18,7 @@ jobs:
     name: "ECR-ECS"
     uses: rewindio/github-action-ecs-deploy/.github/workflows/publish-and-deploy.yml@v0
     with:
-      region_matrix: '[ { region: "us-east-1" }, { region: "us-east-2" } ]'
+      deploy_matrix: '[ { region: "us-east-1" }, { region: "us-east-2" } ]'
       ecs_cluster_name: my-cluster
       ecs_service_name: my-Service-6XXXMsrEhjXH
       ecs_task_definition: my-task-definition
