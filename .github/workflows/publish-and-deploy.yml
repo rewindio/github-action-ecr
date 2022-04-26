@@ -3,8 +3,8 @@ name: Terraform Apply
 on:
   workflow_call:
     inputs:
-      aws_region:
-        description: "The AWS Region to deploy to"
+      deploy_matrix:
+        description: "A JSON list of objects, specifying the region and any additional deployment parameters"
         required: true
         type: string
       ecs_cluster_name:
@@ -67,6 +67,10 @@ jobs:
   build-and-publish:
     name: 'Build & Publish (${{ inputs.ecs_service_name }})'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          ${{ fromJson(inputs.deploy_matrix) }}
     outputs:
       tag: ${{ steps.meta.outputs.tags }}
     steps:
@@ -79,7 +83,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: "${{ inputs.aws_region }}"
+          aws-region: "${{ matrix.region }}"
           mask-aws-account-id: 'no'
 
       - name: Login to Amazon ECR
@@ -140,7 +144,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: "${{ inputs.aws_region }}"
+          aws-region: "${{ matrix.region }}"
 
       - name: Download task definition
         run: |
