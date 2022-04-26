@@ -51,6 +51,14 @@ on:
         description: "The target to build"
         required: false
         type: string
+      login_to_external_registry:
+        description: "External registry to login to if base images are sourced elsewhere."
+        required: false
+        type: boolean
+      external_registry_name:
+        description: "Name of external registry"
+        required: false
+        type: string
     secrets:
       AWS_ACCESS_KEY_ID:
         description: "The AWS Access Key ID used during publish and deploy."
@@ -60,6 +68,12 @@ on:
         required: true
       BUILD_ARGS:
         description: "Docker image build arguments"
+        required: false
+      EXTERNAL_REGISTRY_USERNAME:
+        description: "Username to login to external registry"
+        required: false
+      EXTERNAL_REGISTRY_PW:
+        description: "Password to login to external registry"
         required: false
 
 jobs:
@@ -89,6 +103,14 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Login to External Registry
+        if: ${{ inputs.login_to_external_registry }}
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ inputs.external_registry_name }}
+          username: ${{ secrets.EXTERNAL_REGISTRY_USERNAME }}
+          password: ${{ secrets.EXTERNAL_REGISTRY_PW }}
 
       - name: Docker meta
         id: meta
