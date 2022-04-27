@@ -4,39 +4,18 @@ on:
   workflow_call:
     inputs:
       deploy_matrix:
-        description: "A JSON list of objects, specifying the region and any additional deployment parameters"
+        description: "A JSON list of objects, each specifying the region, ecr_repository and workspace (terraform)."
         required: true
         type: string
-      ecs_cluster_name:
-        description: "Name of an existing ECS Cluster"
+      profile:
+        description: "The AWS profile to use"
         required: true
         type: string
-      ecs_service_name:
-        description: "Name of an existing ECS Service"
-        required: true
+      terraform_dir:
+        description: "The path to the terraform files"
+        required: false
         type: string
-      ecs_task_definition:
-        description: "Name of an existing ECS Task definition"
-        required: true
-        type: string
-      ecr_repository:
-        description: "Name of an existing ECR repository"
-        required: true
-        type: string
-      ecs_container_definition:
-        description: "Name of an existing container definition within the specified task definition"
-        required: true
-        type: string
-      ecs_deploy:
-        description: "Whether or not to deploy the rendered task definition to ECS."
-        required: true
-        default: false
-        type: boolean
-      ecr_push:
-        description: "Whether or not to push the image to ECR."
-        required: true
-        default: false
-        type: boolean
+        default: ./terraform
       docker_file_path:
         description: "The path to the Dockerfile"
         required: false
@@ -58,6 +37,9 @@ on:
       AWS_SECRET_ACCESS_KEY:
         description: "The AWS Secret Access Key used during publish and deploy."
         required: true
+      GITHUB_PAT:
+        description: "A GitHub access token that has repo and read:packages scopes"
+        required: false
       BUILD_ARGS:
         description: "Docker image build arguments"
         required: false
@@ -65,7 +47,7 @@ on:
 jobs:
 
   build-and-publish:
-    name: 'Build & Publish (${{ inputs.ecs_service_name }})'
+    name: 'Build & Publish'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -94,7 +76,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v3
         with:
-          images: "${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}"
+          images: "${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repository }}"
           tags: |
             type=sha,enable=true,priority=100,prefix=sha-,suffix=,format=short
 
@@ -122,22 +104,30 @@ jobs:
           file: "${{ inputs.docker_file_path }}"
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
-          push: ${{ inputs.ecr_push }}
+          push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           target: ${{ inputs.docker_target }}
           build-args: ${{ secrets.BUILD_ARGS }}
 
   deploy:
-    name: 'Deploy (${{ inputs.ecs_service_name }})'
+    name: 'Deploy' 
     needs: [build-and-publish]
     runs-on: ubuntu-latest
-    if: ${{ inputs.ecs_deploy }}
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        include:
+          ${{ fromJson(inputs.deploy_matrix) }}
+    env:
+      AWS_SHARED_CREDENTIALS_FILE: /tmp/ac
 
     steps:
 
       - uses: actions/checkout@v2
         with:
           ref: ${{ github.ref }}
+          submodules: 'true'
+          token: ${{ secrets.GITHUB_PAT }} # Needed for private submodules
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -146,24 +136,58 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: "${{ matrix.region }}"
 
-      - name: Download task definition
+      - name: Set terraform workspace
+        run: echo TF_WORKSPACE="${{ matrix.workspace }}" >> $GITHUB_ENV
+
+      - name: Set varfile
+        id: tfvars
         run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ inputs.ecs_task_definition }} \
-            --query taskDefinition > task-definition.json
+          echo "::set-output name=tfvar_file::tfvars/${{ inputs.profile }}/${{ matrix.workspace }}.tfvars"
 
-      - name: Render Amazon ECS task definition
-        id: render-web-container
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ inputs.ecs_container_definition }}
-          image: ${{ needs.build-and-publish.outputs.tag }}
+      # Allow for private terraform modules to be initialized
+      - name: Setup Git Config
+        run: |
+          git config --global \
+            url."https://oauth2:${{ secrets.GITHUB_PAT }}@github.com".insteadOf https://github.com
 
-      - name: Deploy to ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      - name: Setup AWS credentials
+        run: |
+          cat <<EOF >> "$AWS_SHARED_CREDENTIALS_FILE"
+          [${{ inputs.profile }}]
+          aws_access_key_id = ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws_secret_access_key = ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          EOF
+
+      - name: Set terraform version
+        id: set-terraform-version
+        run: echo "::set-output name=terraform-version::$(cat .terraform-version)"
+
+      - name: Terraform Setup
+        uses: hashicorp/setup-terraform@v1
         with:
-          task-definition: ${{ steps.render-web-container.outputs.task-definition }}
-          service: "${{ inputs.ecs_service_name }}"
-          cluster: "${{ inputs.ecs_cluster_name }}"
-          wait-for-service-stability: true
+          terraform_version: ${{ steps.set-terraform-version.outputs.terraform-version}}
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        id: init
+        working-directory: ${{ inputs.terraform_dir }}
+        run: |
+          backend_file=backend/${{ inputs.profile }}.tfvars
+          echo "::set-output name=backend_file::$backend_file"
+          terraform init -backend-config "$backend_file"
+
+      - name: Terraform Apply
+        id: apply
+        working-directory: ${{ inputs.terraform_dir }}
+        run: |
+          set -xo pipefail
+          terraform apply -no-color \
+            -var "app_image_reference=${{ needs.build-and-publish.outputs.tag }}" \
+            -var-file ${{ steps.init.outputs.backend_file }} \
+            -var-file ${{ steps.tfvars.outputs.tfvar_file }} \
+            -auto-approve |& tee terraform-${{ env.TF_WORKSPACE }}-apply-stdout.txt
+
+      - name: Cleanup AWS Credentials
+        if: always()
+        run: |
+          rm -f "$AWS_SHARED_CREDENTIALS_FILE"
