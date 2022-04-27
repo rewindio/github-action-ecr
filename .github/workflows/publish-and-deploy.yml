@@ -34,7 +34,7 @@ on:
         description: "Login to GHCR"
         required: false
         type: boolean
-        default: false
+        default: true
     secrets:
       AWS_ACCESS_KEY_ID:
         description: "The AWS Access Key ID used during publish and deploy."
