@@ -1,28 +1,25 @@
-# github-action-ecs-deploy
+# github-action-ecr
 
-This is a reusable workflow that both publishes images to ECR and deploys them to ECS via terraform.
+This is a reusable workflow that builds and publishes an image to ECR.
 
 ## Example usage
 
 ```yaml
-name: ECS
-concurrency: ecs
+name: ECR
+concurrency: ecr
 
 on:
   push:
 
 jobs:
-  deploy:
+  publish:
     name: "ECS-ECR"
-    uses: rewindio/github-action-ecs-deploy/.github/workflows/publish-and-deploy.yml@v0
+    uses: rewindio/github-action-ecr/.github/workflows/publish.yml@v0
     with:
-      deploy_matrix: |
-        [
-          { "region": "us-east-1", "workspace": "my-workspace-1", "ecr_repository": "test-repo-1" },
-          { "region": "us-east-1", "workspace": "my-workspace-2", "ecr_repository": "test-repo-2" },
-        ]
-      profile: staging
-      terraform_dir: .
+      profile: production
+      ecr_repository: my-ecr-repo
+      regions: |
+       ["us-east-1"]
     secrets:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

@@ -3,19 +3,18 @@ name: Terraform Apply
 on:
   workflow_call:
     inputs:
-      deploy_matrix:
-        description: "A JSON list of objects, each specifying the region, ecr_repository and workspace (terraform)."
+      regions:
+        description: "A JSON Array containing a list of AWS regions to publish to"
+        required: true
+        type: string
+      ecr_repository:
+        description: "The ECR repository to publish to"
         required: true
         type: string
       profile:
         description: "The AWS profile to use"
         required: true
         type: string
-      terraform_dir:
-        description: "The path to the terraform files"
-        required: false
-        type: string
-        default: ./terraform
       docker_file_path:
         description: "The path to the Dockerfile"
         required: false
@@ -35,6 +34,12 @@ on:
         required: false
         type: boolean
         default: true
+      platforms: 
+        description: "Platforms to publish to."
+        required: false
+        type: string
+        default: |
+          linux/amd64
     secrets:
       AWS_ACCESS_KEY_ID:
         description: "The AWS Access Key ID used during publish and deploy."
@@ -48,6 +53,10 @@ on:
       BUILD_ARGS:
         description: "Docker image build arguments"
         required: false
+    outputs:
+      tag:
+        description: "The image tag"
+        value: ${{ jobs.build-and-publish.outputs.tag }}
 
 jobs:
 
@@ -55,9 +64,9 @@ jobs:
     name: 'Build & Publish'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          ${{ fromJson(inputs.deploy_matrix) }}
+        region: ${{ fromJson(inputs.regions) }}
     outputs:
       tag: ${{ steps.meta.outputs.tags }}
     steps:
@@ -89,7 +98,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v3
         with:
-          images: "${{ steps.login-ecr.outputs.registry }}/${{ matrix.ecr_repository }}"
+          images: "${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}"
           tags: |
             type=sha,enable=true,priority=100,prefix=sha-,suffix=,format=short
 
@@ -116,91 +125,8 @@ jobs:
           context: "${{ inputs.docker_context_path }}"
           file: "${{ inputs.docker_file_path }}"
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64
+          platforms: ${{ inputs.platforms }}
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           target: ${{ inputs.docker_target }}
           build-args: ${{ secrets.BUILD_ARGS }}
-
-  deploy:
-    name: 'Deploy' 
-    needs: [build-and-publish]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    strategy:
-      matrix:
-        include:
-          ${{ fromJson(inputs.deploy_matrix) }}
-    env:
-      AWS_SHARED_CREDENTIALS_FILE: /tmp/ac
-
-    steps:
-
-      - uses: actions/checkout@v2
-        with:
-          ref: ${{ github.ref }}
-          submodules: 'true'
-          token: ${{ secrets.GITHUB_PAT }} # Needed for private submodules
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: "${{ matrix.region }}"
-
-      - name: Set terraform workspace
-        run: echo TF_WORKSPACE="${{ matrix.workspace }}" >> $GITHUB_ENV
-
-      - name: Set varfile
-        id: tfvars
-        run: |
-          echo "::set-output name=tfvar_file::tfvars/${{ inputs.profile }}/${{ matrix.workspace }}.tfvars"
-
-      # Allow for private terraform modules to be initialized
-      - name: Setup Git Config
-        run: |
-          git config --global \
-            url."https://oauth2:${{ secrets.GITHUB_PAT }}@github.com".insteadOf https://github.com
-
-      - name: Setup AWS credentials
-        run: |
-          cat <<EOF >> "$AWS_SHARED_CREDENTIALS_FILE"
-          [${{ inputs.profile }}]
-          aws_access_key_id = ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key = ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          EOF
-
-      - name: Set terraform version
-        id: set-terraform-version
-        run: echo "::set-output name=terraform-version::$(cat .terraform-version)"
-
-      - name: Terraform Setup
-        uses: hashicorp/setup-terraform@v1
-        with:
-          terraform_version: ${{ steps.set-terraform-version.outputs.terraform-version}}
-          terraform_wrapper: false
-
-      - name: Terraform Init
-        id: init
-        working-directory: ${{ inputs.terraform_dir }}
-        run: |
-          backend_file=backend/${{ inputs.profile }}.tfvars
-          echo "::set-output name=backend_file::$backend_file"
-          terraform init -backend-config "$backend_file"
-
-      - name: Terraform Apply
-        id: apply
-        working-directory: ${{ inputs.terraform_dir }}
-        run: |
-          set -xo pipefail
-          terraform apply -no-color \
-            -var "app_image_reference=${{ needs.build-and-publish.outputs.tag }}" \
-            -var-file ${{ steps.init.outputs.backend_file }} \
-            -var-file ${{ steps.tfvars.outputs.tfvar_file }} \
-            -auto-approve |& tee terraform-${{ env.TF_WORKSPACE }}-apply-stdout.txt
-
-      - name: Cleanup AWS Credentials
-        if: always()
-        run: |
-          rm -f "$AWS_SHARED_CREDENTIALS_FILE"
