@@ -67,6 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         region: ${{ fromJson(inputs.regions) }}
+        profile: [ "${{ inputs.profile }}" ]
     outputs:
       tag: ${{ steps.meta.outputs.tags }}
     steps:
