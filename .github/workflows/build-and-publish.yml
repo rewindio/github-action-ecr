@@ -11,6 +11,11 @@ on:
         description: "The ECR repository to publish to"
         required: true
         type: string
+      ecr_push:
+        description: "Whether or not to push the image."
+        required: false
+        default: true
+        type: boolean
       profile:
         description: "The AWS profile to use"
         required: true
@@ -143,7 +148,7 @@ jobs:
           file: "${{ inputs.docker_file_path }}"
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ inputs.platforms }}
-          push: ${{ github.ref == 'refs/heads/main' }}
+          push: ${{ inputs.ecr_push }}
           tags: ${{ steps.meta.outputs.tags }}
           target: ${{ inputs.docker_target }}
           build-args: ${{ secrets.BUILD_ARGS }}
