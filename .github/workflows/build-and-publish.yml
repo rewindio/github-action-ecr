@@ -128,7 +128,7 @@ jobs:
           fi
 
       - name: Login to ghcr.io
-        if: ${{ inputs.login_to_ghcr }} && steps.check-tag.outputs.exists == 'false && steps.check-repo.outputs.exists == 'true'
+        if: ${{ inputs.login_to_ghcr }} && steps.check-tag.outputs.exists == 'false' && steps.check-repo.outputs.exists == 'true'
         uses: docker/login-action@v1
         with:
           registry: ghcr.io
