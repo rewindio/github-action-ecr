@@ -45,6 +45,11 @@ on:
         type: string
         default: |
           linux/amd64
+      prefix:
+        description: "Prefix for docker image tags"
+        required: false
+        type: string
+        default: ""
     secrets:
       AWS_ACCESS_KEY_ID:
         description: "The AWS Access Key ID used during publish and deploy."
@@ -98,7 +103,7 @@ jobs:
         with:
           images: "${{ steps.login-ecr.outputs.registry }}/${{ inputs.ecr_repository }}"
           tags: |
-            type=sha,enable=true,prefix=,format=short
+            type=sha,enable=true,prefix=${{ inputs.prefix }},format=short
 
         # Publish expects the repo to already exist,
         # but in the initial bootstrap, it won't yet exist,
