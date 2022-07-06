@@ -1,0 +1,68 @@
+name: Verify ECS Deploy
+
+on:
+  workflow_call:
+    inputs:
+      regions:
+        description: "JSON array of AWS region(s) to verify ECS deployments"
+        required: true
+        type: string
+      profile:
+        description: "The AWS profile to use"
+        required: true
+        type: string
+      ecs_service:
+        description: "Name of ECS service to verify"
+        required: true
+        type: string
+      ecs_cluster:
+        description: "ECS Cluster where the service is deployed"
+        required: true
+        type: string
+      release_image:
+        description: "Image that is being deployed"
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        description: "The AWS Access Key ID used during publish and deploy."
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        description: "The AWS Secret Access Key used during publish and deploy."
+        required: true
+
+jobs:
+  verify-ecs-deployment:
+    name: 'Build & Publish'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ fromJson(inputs.regions) }}
+        profile: [ "${{ inputs.profile }}" ]
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "${{ matrix.region }}"
+          mask-aws-account-id: 'no'
+      
+      - name: Set deployed image reference
+        id: set-deployed-ecs-image
+        run: |
+         export CURRENT_TASK_DEFINITION=$(aws ecs describe-services --services "${{ inputs.ecs_service }}" --cluster "${{ inputs.ecs_cluster}}" | jq -r '.services[].deployments[] |.taskDefinition')
+         export DEPLOYED_IMAGE=$(aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEFINITION}" | jq -r '.taskDefinition.containerDefinitions[] | .image')
+         
+         echo "::set-output name=DEPLOYED_IMAGE::${DEPLOYED_IMAGE}"
+
+      - name: Verify deployed image matches release image
+        id: verify-deployed-image
+        run: |
+          if ["${{ inputs.release_image }}" == "${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}"]; then
+            exit 0
+          else
+            echo "${{ inputs.release_image}} does not match deployed image ${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}"
+            exit 1
+          fi
