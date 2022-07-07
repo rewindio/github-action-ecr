@@ -1,0 +1,143 @@
+name: Verify ECS Deploy
+
+on:
+  workflow_call:
+    inputs:
+      regions:
+        description: "JSON array of AWS region(s) to verify ECS deployments"
+        required: true
+        type: string
+      profile:
+        description: "The AWS profile to use"
+        required: true
+        type: string
+      ecs_service:
+        description: "Name of ECS service to verify"
+        required: true
+        type: string
+      ecs_cluster:
+        description: "ECS Cluster where the service is deployed"
+        required: true
+        type: string
+      release_image:
+        description: "Image that is being deployed"
+        required: true
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        description: "The AWS Access Key ID used during publish and deploy."
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        description: "The AWS Secret Access Key used during publish and deploy."
+        required: true
+      GITHUB_PAT:
+        description: "A GitHub PAT used to initialize private submodules"
+        required: true
+      APPLY_FAILURES_SLACK_WEBHOOK_URL:
+        description: "The Slack webhook url that maps to a Slack channel. This channel will be notified after a failed deploy."
+        required: false
+      APPLY_SUCCESS_SLACK_WEBHOOK_URL:
+        description: "The Slack webhook url that maps to a Slack channel. This channel will be notified after a successful deploy."
+        required: false
+      LOOKUP_USER_EMAIL_SLACK_TOKEN:
+        description: "A token to look up users by email and message them directly. This requires the GitHub & Slack email to match, and the 'Keep my email addresses private' option disabled. No failures occur in other cases."
+        required: false
+
+jobs:
+  verify-ecs-deployment:
+    name: 'Build & Publish'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        region: ${{ fromJson(inputs.regions) }}
+        profile: [ "${{ inputs.profile }}" ]
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.ref }}
+      
+      - name: Check if secrets are set
+        # Allows for conditionals on secrets without exposing them
+        # https://github.com/actions/runner/issues/520
+        # https://github.community/t/how-can-i-test-if-secrets-are-available-in-an-action/17911/10
+        id: secrets-set
+        run: |
+          echo '::set-output name=APPLY_SUCCESS_SLACK_WEBHOOK_URL::${{secrets.APPLY_SUCCESS_SLACK_WEBHOOK_URL != ''}}'
+          echo '::set-output name=APPLY_FAILURES_SLACK_WEBHOOK_URL::${{secrets.APPLY_FAILURES_SLACK_WEBHOOK_URL != ''}}'
+          echo '::set-output name=LOOKUP_USER_EMAIL_SLACK_TOKEN::${{secrets.LOOKUP_USER_EMAIL_SLACK_TOKEN != ''}}'
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: "${{ matrix.region }}"
+          mask-aws-account-id: 'no'
+      
+      - name: Set deployed image reference
+        id: set-deployed-ecs-image
+        run: |
+         export CURRENT_TASK_DEFINITION=$(aws ecs describe-services --services "${{ inputs.ecs_service }}" --cluster "${{ inputs.ecs_cluster}}" | jq -r '.services[].deployments[0] | .taskDefinition')
+         export DEPLOYED_IMAGE=$(aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEFINITION}" | jq -r '.taskDefinition.containerDefinitions[0] | .image')
+         
+         echo "::set-output name=DEPLOYED_IMAGE::${DEPLOYED_IMAGE}"
+
+      - name: Verify deployed image matches release image
+        id: verify-deployed-image
+        run: |
+          if ["${{ inputs.release_image }}" == "${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}"]; then
+            exit 0
+          else
+            echo "${{ inputs.release_image}} does not match deployed image ${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}"
+            exit 1
+          fi
+
+      - name: Set commit title
+        if: always()
+        # https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#setting-an-environment-variable
+        continue-on-error: true
+        # We take the first line (%s) from the git log and then escape out any single quotes
+        # https://stackoverflow.com/a/24247870
+        run: echo COMMIT_MESSAGE=$(git log -n 1 --pretty=format:%s) >> $GITHUB_ENV
+
+      - name: Notify Slack on Success
+        uses: ravsamhq/notify-slack-action@v1
+        if: always() && steps.secrets-set.outputs.APPLY_SUCCESS_SLACK_WEBHOOK_URL == 'true'
+        with:
+          status: ${{ job.status }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          notification_title: '{emoji} <{run_url}|Deployment> to ${{ inputs.ecs_service }} has {status_message}'
+          message_format: >
+            ${{ github.actor }} pushed <{commit_url}|${{ env.COMMIT_MESSAGE }}>
+          footer: '<{repo_url}|{repo}>'
+          notify_when: 'success'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.APPLY_SUCCESS_SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on Failure
+        uses: ravsamhq/notify-slack-action@v1
+        if: always() && steps.secrets-set.outputs.APPLY_FAILURES_SLACK_WEBHOOK_URL == 'true'
+        with:
+          status: ${{ job.status }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          notification_title: '{emoji} <{run_url}| Deployment> to ${{ inputs.ecs_service }} has {status_message}'
+          message_format: >
+            ${{ github.actor }} pushed <{commit_url}|${{ env.COMMIT_MESSAGE }}>
+          footer: '<{repo_url}|{repo}>'
+          notify_when: 'failure'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.APPLY_FAILURES_SLACK_WEBHOOK_URL }}
+
+      - name: Find Slack user
+        if: failure() && steps.secrets-set.outputs.LOOKUP_USER_EMAIL_SLACK_TOKEN == 'true'
+        id: find-slack-user
+        uses: scribd/find-slack-user-action@v1
+        with:
+          include-at-symbol: true
+          slack-token: ${{ secrets.LOOKUP_USER_EMAIL_SLACK_TOKEN }}
+
+      - name: Cleanup AWS Credentials
+        if: always()
+        run: |
+          rm -f "$AWS_SHARED_CREDENTIALS_FILE"
