@@ -34,10 +34,10 @@ on:
         description: "A GitHub PAT used to initialize private submodules"
         required: true
       APPLY_FAILURES_SLACK_WEBHOOK_URL:
-        description: "The Slack webhook url that maps to a Slack channel. This channel will be notified after a failed apply."
+        description: "The Slack webhook url that maps to a Slack channel. This channel will be notified after a failed deploy."
         required: false
       APPLY_SUCCESS_SLACK_WEBHOOK_URL:
-        description: "The Slack webhook url that maps to a Slack channel. This channel will be notified after a successful apply."
+        description: "The Slack webhook url that maps to a Slack channel. This channel will be notified after a successful deploy."
         required: false
       LOOKUP_USER_EMAIL_SLACK_TOKEN:
         description: "A token to look up users by email and message them directly. This requires the GitHub & Slack email to match, and the 'Keep my email addresses private' option disabled. No failures occur in other cases."
@@ -53,6 +53,9 @@ jobs:
         region: ${{ fromJson(inputs.regions) }}
         profile: [ "${{ inputs.profile }}" ]
     steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.ref }}
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
