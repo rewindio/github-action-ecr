@@ -56,6 +56,17 @@ jobs:
       - uses: actions/checkout@v2
         with:
           ref: ${{ github.ref }}
+      
+      - name: Check if secrets are set
+        # Allows for conditionals on secrets without exposing them
+        # https://github.com/actions/runner/issues/520
+        # https://github.community/t/how-can-i-test-if-secrets-are-available-in-an-action/17911/10
+        id: secrets-set
+        run: |
+          echo '::set-output name=APPLY_SUCCESS_SLACK_WEBHOOK_URL::${{secrets.APPLY_SUCCESS_SLACK_WEBHOOK_URL != ''}}'
+          echo '::set-output name=APPLY_FAILURES_SLACK_WEBHOOK_URL::${{secrets.APPLY_FAILURES_SLACK_WEBHOOK_URL != ''}}'
+          echo '::set-output name=LOOKUP_USER_EMAIL_SLACK_TOKEN::${{secrets.LOOKUP_USER_EMAIL_SLACK_TOKEN != ''}}'
+      
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
