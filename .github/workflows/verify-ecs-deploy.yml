@@ -121,7 +121,7 @@ jobs:
         with:
           status: ${{ job.status }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          notification_title: '{emoji} <{run_url}|Deployment> to ${{ inputs.ecs_service }} has {status_message}'
+          notification_title: '{emoji} <{run_url}| Deployment> to ${{ inputs.ecs_service }} has {status_message}'
           message_format: >
             ${{ github.actor }} pushed <{commit_url}|${{ env.COMMIT_MESSAGE }}>
           footer: '<{repo_url}|{repo}>'
@@ -136,18 +136,6 @@ jobs:
         with:
           include-at-symbol: true
           slack-token: ${{ secrets.LOOKUP_USER_EMAIL_SLACK_TOKEN }}
-
-      - name: Send a Slack DM to the user linking the failure
-        if: failure() && steps.secrets-set.outputs.LOOKUP_USER_EMAIL_SLACK_TOKEN == 'true'
-        uses: archive/github-actions-slack@v2.2.1
-        with:
-          slack-function: send-message
-          slack-bot-user-oauth-access-token: ${{ secrets.LOOKUP_USER_EMAIL_SLACK_TOKEN }}
-          slack-channel: "${{ steps.find-slack-user.outputs.username }}"
-          slack-text: |
-            <@${{ steps.find-slack-user.outputs.member-id }}>: <${{ env.RUN_URL }}|${{ env.COMMIT_MESSAGE }}> has failed.
-        env:
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Cleanup AWS Credentials
         if: always()
