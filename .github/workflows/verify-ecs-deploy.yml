@@ -52,8 +52,8 @@ jobs:
       - name: Set deployed image reference
         id: set-deployed-ecs-image
         run: |
-         export CURRENT_TASK_DEFINITION=$(aws ecs describe-services --services "${{ inputs.ecs_service }}" --cluster "${{ inputs.ecs_cluster}}" | jq -r '.services[].deployments[] |.taskDefinition')
-         export DEPLOYED_IMAGE=$(aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEFINITION}" | jq -r '.taskDefinition.containerDefinitions[] | .image')
+         export CURRENT_TASK_DEFINITION=$(aws ecs describe-services --services "${{ inputs.ecs_service }}" --cluster "${{ inputs.ecs_cluster}}" | jq -r '.services[].deployments[0] | .taskDefinition')
+         export DEPLOYED_IMAGE=$(aws ecs describe-task-definition --task-definition "${CURRENT_TASK_DEFINITION}" | jq -r '.taskDefinition.containerDefinitions[0] | .image')
          
          echo "::set-output name=DEPLOYED_IMAGE::${DEPLOYED_IMAGE}"
 
