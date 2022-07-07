@@ -86,7 +86,7 @@ jobs:
       - name: Verify deployed image matches release image
         id: verify-deployed-image
         run: |
-          if ["${{ inputs.release_image }}" == "${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}"]; then
+          if [ "${{ inputs.release_image }}" == "${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}" ]; then
             exit 0
           else
             echo "${{ inputs.release_image}} does not match deployed image ${{ steps.set-deployed-ecs-image.outputs.DEPLOYED_IMAGE }}"
