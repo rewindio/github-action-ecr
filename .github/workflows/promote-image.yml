@@ -33,12 +33,18 @@ on:
       TARGET_AWS_SECRET_ACCESS_KEY:
         description: "The AWS Secret Access Key used during publish and deploy."
         required: true
+    outputs:
+      tag:
+        description: "The image tag"
+        value: ${{ jobs.promote-image.outputs.tag }}
 
 jobs:
 
   promote-image:
     name: 'Promote Docker Image'
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tags }}
     steps:
       - name: Configure Source AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
