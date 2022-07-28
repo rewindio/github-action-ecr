@@ -3,7 +3,7 @@ name: Promote Docker Image
 on:
   workflow_call:
     inputs:
-      regions:
+      region:
         description: "A JSON Array containing a list of AWS regions to publish to"
         required: true
         type: string
