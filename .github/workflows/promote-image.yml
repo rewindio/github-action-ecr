@@ -1,0 +1,80 @@
+name: Promote Docker Image
+
+on:
+  workflow_call:
+    inputs:
+      regions:
+        description: "A JSON Array containing a list of AWS regions to publish to"
+        required: true
+        type: string
+      source_image:
+        description: "The image to copy"
+        required: true
+        type: string
+      ecr_repository:
+        description: "The ECR repository to publish to"
+        required: true
+        type: string
+      prefix:
+        description: "Prefix for docker image tags"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      SOURCE_AWS_ACCESS_KEY_ID:
+        description: "The AWS Access Key ID for the source image."
+        required: true
+      SOURCE_AWS_SECRET_ACCESS_KEY:
+        description: "The AWS Secret Access Key for the source image."
+        required: true
+      TARGET_AWS_ACCESS_KEY_ID:
+        description: "The AWS Access Key ID used during publish and deploy."
+        required: true
+      TARGET_AWS_SECRET_ACCESS_KEY:
+        description: "The AWS Secret Access Key used during publish and deploy."
+        required: true
+
+jobs:
+
+  promote-image:
+    name: 'Promote Docker Image'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure Source AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.SOURCE_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.SOURCE_AWS_SECRET_ACCESS_KEY }}
+          aws-region: "${{ inputs.region }}"
+          mask-aws-account-id: 'no'
+      
+      - name: Login to Source Amazon ECR
+        id: login-ecr-source
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Configure Target AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.TARGET_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TARGET_AWS_SECRET_ACCESS_KEY }}
+          aws-region: "${{ inputs.region }}"
+          mask-aws-account-id: 'no'
+      
+      - name: Login to Target Amazon ECR
+        id: login-ecr-target
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v3
+        with:
+          images: "${{ steps.login-ecr-target.outputs.registry }}/${{ inputs.ecr_repository }}"
+          tags: |
+            type=sha,enable=true,prefix=${{ inputs.prefix }},format=short
+      - # this will copy multi platform images
+        name: Push Image to target registries
+        uses: akhilerm/tag-push-action@v2.0.0
+        with:
+          src: "${{ inputs.source_image }}"
+          dst: |
+            ${{ steps.meta.outputs.tags }}
